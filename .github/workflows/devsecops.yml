@@ -1,4 +1,4 @@
-name: DevSecOps CI/CD Pipeline {explore the code}
+name: DevSecOps CI/CD Pipeline {explore the critical security checks and deployment steps for the DevOps Project Tracker application}
 
 on:
   push:
