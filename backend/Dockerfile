@@ -2,10 +2,13 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 
 COPY package*.json ./
+RUN apk upgrade --no-cache
 RUN npm ci
 
 FROM node:20-alpine AS builder
 WORKDIR /app
+
+RUN apk upgrade --no-cache
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
@@ -23,7 +26,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3001
 
-COPY --from=builder /app/package*.json ./
+RUN apk upgrade --no-cache \
+	&& rm -rf /usr/local/lib/node_modules/npm \
+	&& rm -f /usr/local/bin/npm /usr/local/bin/npx
+
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/dist ./dist
