@@ -1,0 +1,197 @@
+name: DevSecOps CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service: [frontend, backend]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          cd ${{ matrix.service }}
+          npm install
+
+      - name: Run lint
+        run: |
+          cd ${{ matrix.service }}
+          npm run lint --if-present
+
+      - name: TypeScript build check
+        run: |
+          cd ${{ matrix.service }}
+          npx tsc --noEmit
+
+
+  secret-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+
+
+  dependency-scan:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service: [frontend, backend]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          cd ${{ matrix.service }}
+          npm install
+
+      - name: Run dependency vulnerability scan
+        run: |
+          cd ${{ matrix.service }}
+          npm audit --audit-level=high
+
+
+  sast:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+
+      - name: Autobuild Project
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Run CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+
+  build-images:
+    runs-on: ubuntu-latest
+    needs:
+      - lint-and-test
+      - dependency-scan
+      - secret-scan
+
+    strategy:
+      matrix:
+        service: [frontend, backend]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t devops-tracker-${{ matrix.service }} ./${{ matrix.service }}
+
+
+  container-scan:
+    runs-on: ubuntu-latest
+    needs: build-images
+
+    strategy:
+      matrix:
+        service: [frontend, backend]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        run: |
+          docker build -t scan-${{ matrix.service }} ./${{ matrix.service }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: scan-${{ matrix.service }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+
+
+  push-images:
+    runs-on: ubuntu-latest
+    needs: container-scan
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build Docker images
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/devops-tracker-frontend ./frontend
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/devops-tracker-backend ./backend
+
+      - name: Push Docker images
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/devops-tracker-frontend
+          docker push ${{ secrets.DOCKER_USERNAME }}/devops-tracker-backend
+
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: push-images
+
+    steps:
+      - name: Deploy application to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd devops-tracker
+
+            echo "Pulling latest images..."
+            docker pull ${{ secrets.DOCKER_USERNAME }}/devops-tracker-backend
+            docker pull ${{ secrets.DOCKER_USERNAME }}/devops-tracker-frontend
+
+            echo "Restarting containers..."
+            docker compose down
+            docker compose up -d
+
+            echo "Cleaning unused images..."
+            docker image prune -f
