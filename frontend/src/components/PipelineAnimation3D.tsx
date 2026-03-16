@@ -178,7 +178,7 @@ export default function PipelineAnimation3D() {
       cleanup?.()
       if (renderer) renderer.dispose()
       if (mountRef.current && renderer?.domElement) {
-        try { mountRef.current.removeChild(renderer.domElement) } catch {}
+        try { mountRef.current.removeChild(renderer.domElement) } catch (_e) { /* DOM cleanup: element may have already been removed */ }
       }
     }
   }, [])
