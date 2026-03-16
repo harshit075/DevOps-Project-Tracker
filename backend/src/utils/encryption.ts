@@ -2,7 +2,10 @@ import crypto from 'crypto';
 
 const ALGORITHM = 'aes-256-cbc';
 const IV_LENGTH = 16;
-// Fixed salt for key derivation — the raw ENCRYPTION_KEY is the secret; the salt just adds domain separation
+// Fixed salt for PBKDF2 key derivation. The raw ENCRYPTION_KEY is the secret;
+// the fixed salt provides domain separation and ensures consistent key derivation
+// for encryption/decryption operations. Per-key uniqueness comes from the random IV
+// generated fresh for every encrypt() call.
 const KDF_SALT = Buffer.from('devops-tracker-kdf-salt', 'utf8');
 
 function getEncryptionKey(): Buffer {
